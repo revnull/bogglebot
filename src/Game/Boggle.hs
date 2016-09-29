@@ -1,8 +1,16 @@
-{-# LANGUAGE OverloadedStrings, DeriveFunctor #-}
+{-# LANGUAGE OverloadedStrings, DeriveFunctor, FlexibleContexts #-}
 
 module Game.Boggle(
                    randomBoard
                   ,solver
+                  ,Board
+                  ,boardLines
+                  ,GameState
+                  ,newGame
+                  ,gameRunning
+                  ,getBoard
+                  ,scoreWord
+                  ,endGame
                    ) where
 
 import Control.Monad
@@ -14,6 +22,7 @@ import Data.Bits
 import qualified Data.ByteString as BS
 import System.Random
 import qualified Data.Map as M
+import qualified Data.Set as S
 import Control.Monad.State
 import Data.Maybe
 
@@ -77,6 +86,15 @@ instance Show Board where
         toStr p@(_,c) = shows (arr ! p) .
             if c == 3 then showChar '\n' else showChar ' '
 
+boardLines :: Board -> [BS.ByteString]
+boardLines (Board arr) = xs where
+    xs = do
+        r <- [0..3]
+        return . BS.concat $ do
+            c <- [0..3]
+            letters (arr ! (r, c))
+    letters bs = [bs, if BS.length bs == 1 then "  " else " "]
+
 newBoard :: [BS.ByteString] -> Board
 newBoard = Board . array ((0,0),(3,3)) . zip coords
 
@@ -84,13 +102,13 @@ newBoard = Board . array ((0,0),(3,3)) . zip coords
 randomBoard :: StdGen -> (Board, StdGen)
 randomBoard g = (newBoard l, g') where
     (l, (g', _)) = runState brd (g, letterFreqs)
-    brd = forM [0..15] $ const (randomLetter)
+    brd = forM ([0..15] :: [Int]) $ const (randomLetter)
 
 data Pos = Pos {-# UNPACK #-} !(Int, Int) {-# UNPACK #-} !Word16
     deriving (Show)
 
 nextPos :: Pos -> [Pos]
-nextPos (Pos p@(r,c) bm) = do
+nextPos (Pos (r,c) bm) = do
     r' <- [-1..1]
     c' <- [-1..1]
     guard (not (r' == 0 && c' == 0))
@@ -135,4 +153,53 @@ hylo f g = hylo' where hylo' = g . fmap hylo' . f
 solver :: Board -> Trie -> [BS.ByteString]
 solver b t = filter ((>=3) . BS.length) $
     hylo (buildTree b) solveTree Nothing (Just t) []
+
+wordValue :: BS.ByteString -> Word32
+wordValue = (fibs !!) . (\x -> x - 3) . BS.length where
+    fibs :: [Word32]
+    fibs = 1:1:zipWith (+) fibs (tail fibs)
+
+type GameState =
+    (StdGen, Maybe (Board, S.Set BS.ByteString, M.Map BS.ByteString Word32))
+
+gameRunning :: State GameState Bool
+gameRunning = (isJust . snd) <$> get
+
+newGame :: Trie -> State GameState Bool
+newGame t = do
+    new <- not <$> gameRunning
+    when new $ do
+        (g, _) <- get
+        let (b, g') = runState (state randomBoard) g
+            words = S.fromList $ solver b t
+        put (g', Just (b, words, M.empty))
+    return new
+
+getBoard :: State GameState (Maybe Board)
+getBoard = do
+    r <- gameRunning
+    if r
+        then do
+            (_, Just (b, _, _)) <- get
+            return (Just b)
+        else return Nothing 
+
+scoreWord :: BS.ByteString -> BS.ByteString -> State GameState ()
+scoreWord p w = do
+    r <- gameRunning
+    when r $ do
+        (g, Just (b, ws, ss)) <- get
+        when (S.member w ws) $ do
+            let wv = wordValue w
+                score Nothing = Just wv
+                score (Just i) = Just (i + wv)
+            put (g, Just (b, S.delete w ws, M.alter score p ss))
+
+endGame :: State GameState (Maybe [(BS.ByteString, Word32)])
+endGame = gameRunning >>= end where
+    end False = return Nothing
+    end _ = do
+        (g, Just (_, _, ss)) <- get
+        put (g, Nothing)
+        return (Just $ M.toList ss)
 

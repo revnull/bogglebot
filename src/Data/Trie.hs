@@ -1,13 +1,13 @@
 {-# LANGUAGE FlexibleContexts #-}
 
 module Data.Trie (
-                  Trie,
-                  readDict,
-                  lookupTrie,
-                  getWord,
-                  descendTrie,
-                  sanitize
-                  ) where
+                  Trie
+                 ,readDict
+                 ,lookupTrie
+                 ,getWord
+                 ,descendTrie
+                 ,sanitize
+                 ) where
 
 import Control.Applicative
 import Control.Monad
