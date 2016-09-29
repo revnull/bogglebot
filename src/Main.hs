@@ -10,6 +10,7 @@ import Data.Trie
 import Data.Maybe
 import Data.String
 import Data.Monoid
+import Data.Foldable hiding (forM_, mapM_)
 import Game.Boggle
 import System.Random
 import Network.IRC
@@ -23,6 +24,8 @@ import Data.Conduit.Attoparsec
 import Data.Conduit.Network
 import Data.Conduit.Network.TLS
 import Data.IORef
+import Data.List as L
+import Data.Function
 
 data Config = Config {
     host :: BS.ByteString,
@@ -55,7 +58,7 @@ handler conf t app = do
     outp <- newTChanIO
     atomically $ do
         writeTChan outp (Nick (ident conf))
-        writeTChan outp (User (ident conf))
+        writeTChan outp (Login (ident conf))
         writeTChan outp (JoinChannel (channel conf))
     g <- newStdGen
     gs <- newTVarIO (g, Nothing)
@@ -79,33 +82,56 @@ handler conf t app = do
                 writeTVar gs gs''
                 return ng
             when ng . void . forkIO $ do
-                print "New Game"
-                threadDelay 180000000
+                threadDelay 120000000
+                atomically $ writeTChan outp
+                    (SendMsg (channel conf) "1 Minute Remaining")
+                threadDelay 60000000
                 atomically $ do
                     gs' <- readTVar gs
-                    let (Just scores, gs'') = S.runState endGame gs'
+                    let (Just (scores, missed), gs'') = S.runState endGame gs'
                     writeTVar gs gs''
-                    forM_ scores $ \(p, s) -> do
+                    writeTChan outp (SendMsg (channel conf) "Time's up!")
+                    let scores' = L.reverse $ sortBy (compare `on` snd) scores
+                    forM_ scores' $ \(p, s) -> do
                         let msg = p <> " : " <> fromString (show s)
                         writeTChan outp (SendMsg (channel conf) msg)
+                    forM_ (chunkWords missed) $ \miss -> do
+                        writeTChan outp (SendMsg (channel conf) ("Missed Words: " <>
+                            BS.intercalate ", " miss))
     forkIO $ tcSource $$ appSink app
     appSource app =$= conduitParser parseMessage $$ tcSink
 
+chunkWords :: [BS.ByteString] -> [[BS.ByteString]]
+chunkWords = ($ []) . chunk' 0 id where
+    chunk' 0 _ [] = id
+    chunk' _ f [] = (f []:)
+    chunk' c f l@(x:xs)
+        | c > 100 = (f []:) . chunk' 0 id l
+        | otherwise = chunk' (c + BS.length x) (f . (x:)) xs
+
 playGame :: Trie -> BS.ByteString -> Message ->
     S.State GameState (Bool, [Response])
-playGame t ch (PrivMsg ch' usr txt)
+playGame t ch (PrivMsg (User usr _) ch' txt)
     | ch == ch' = do
         r <- gameRunning 
-        case (r, txt == "Boggle Time") of
-            (True, _) -> do
+        case (r, txt == "Boggle Time", txt == "!board") of
+            (True, _, showBoard) -> do
                 let bs = catMaybes . fmap sanitize . BS.split 32 $ txt
                 mapM_ (scoreWord usr) bs
-                return (False, [])
-            (False, True) -> do
+                if showBoard
+                    then do
+                        Just b <- getBoard
+                        return (False, fmap (SendMsg ch) (boardLines b))
+                    else return (False, [])
+            (False, True, _) -> do
                 newGame t
-                Just b <- getBoard
+                (_, Just (b, ws, _)) <- S.get
                 let xs = fmap (SendMsg ch) (boardLines b)
-                return (True, xs)
+                    btmsg = SendMsg ch "It's Boggle Time!"
+                    msmsg = SendMsg ch ("Maximum Score " <> fromString (show ms))
+                    ms = getSum $ foldMap (Sum . wordValue) ws
+                return (True, btmsg:msmsg:xs)
+            _ -> return (False, [])
     | otherwise = return (False, [])
 playGame _ _ _ = return (False, [])
 
@@ -117,6 +143,8 @@ main = do
     case econf of
         Left err -> print err
         Right conf -> do
-            d <- readDict "/usr/share/dict/words"
+            d <- readDict "data/american.dict"
+            Prelude.putStrLn $ "Total Word Count: " ++
+                show (L.length (fullDict d))
             bot d conf
     

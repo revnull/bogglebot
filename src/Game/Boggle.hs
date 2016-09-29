@@ -10,10 +10,14 @@ module Game.Boggle(
                   ,gameRunning
                   ,getBoard
                   ,scoreWord
+                  ,wordValue
                   ,endGame
                    ) where
 
+import Prelude hiding (foldr)
+import Control.Applicative
 import Control.Monad
+import Data.Foldable
 import Data.Monoid
 import Data.Word
 import Data.Array
@@ -195,11 +199,11 @@ scoreWord p w = do
                 score (Just i) = Just (i + wv)
             put (g, Just (b, S.delete w ws, M.alter score p ss))
 
-endGame :: State GameState (Maybe [(BS.ByteString, Word32)])
+endGame :: State GameState (Maybe ([(BS.ByteString, Word32)],[BS.ByteString]))
 endGame = gameRunning >>= end where
     end False = return Nothing
     end _ = do
-        (g, Just (_, _, ss)) <- get
+        (g, Just (_, missed, ss)) <- get
         put (g, Nothing)
-        return (Just $ M.toList ss)
+        return (Just (M.toList ss, S.toList missed))
 
