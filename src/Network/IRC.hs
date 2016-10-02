@@ -2,6 +2,7 @@
 
 module Network.IRC (
                     Message(..)
+                   ,msgChannel
                    ,User(..)
                    ,Response(..)
                    ,parseMessage
@@ -26,6 +27,12 @@ data Message =
   | Quit User BS.ByteString
   | Unknown BS.ByteString
   deriving (Read, Show, Eq, Ord)
+
+msgChannel :: Message -> Maybe BS.ByteString
+msgChannel (PrivMsg _ ch _) = Just ch
+msgChannel (Join _ ch) = Just ch
+msgChannel (Quit _ ch) = Just ch
+msgChannel _ = Nothing
 
 data Response =
     Pong BS.ByteString

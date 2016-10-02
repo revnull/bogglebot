@@ -14,6 +14,8 @@ import Data.Foldable hiding (forM_, mapM_)
 import Game.Boggle
 import System.Random
 import Network.IRC
+import qualified Network.IRC.Bot as B
+import Network.IRC.Bot.STM
 import Network.TLS
 import System.Environment
 import Data.ConfigFile
@@ -47,6 +49,11 @@ instance Monoid CPErrorData where
     mappend (OtherProblem "mempty Error") y = y
     mappend x _ = x
 
+startBots :: Trie -> StdGen -> BS.ByteString -> B.Bot () ()
+startBots t g ch = do
+    B.fork () B.pingBot
+    B.fork (g, Nothing) (B.runChannel ch $ boggleBot ch t)
+
 bot :: Trie -> Config -> IO ()
 bot t conf = do
     let c' = tlsClientConfig (port conf) (host conf)
@@ -61,7 +68,7 @@ handler conf t app = do
         writeTChan outp (Login (ident conf))
         writeTChan outp (JoinChannel (channel conf))
     g <- newStdGen
-    gs <- newTVarIO (g, Nothing)
+    newBot inp outp () $ startBots t g (channel conf)
     let tcSource = forever $ do
             resp <- liftIO . atomically $ readTChan outp
             yield (BSL.toStrict $ encodeResponse resp)
@@ -71,33 +78,10 @@ handler conf t app = do
             liftIO $ print msg
             case msg of
                 Nothing -> return ()
-                Just (_, msg) -> botHandler msg >> tcSink
-        botHandler (Ping m) = liftIO . atomically $ writeTChan outp (Pong m)
-        botHandler m = liftIO $ do
-            ng <- atomically $ do
-                gs' <- readTVar gs
-                let ((ng, msgs), gs'') =
-                        S.runState (playGame t (channel conf) m) gs'
-                mapM_ (writeTChan outp) msgs
-                writeTVar gs gs''
-                return ng
-            when ng . void . forkIO $ do
-                threadDelay 120000000
-                atomically $ writeTChan outp
-                    (SendMsg (channel conf) "1 Minute Remaining")
-                threadDelay 60000000
-                atomically $ do
-                    gs' <- readTVar gs
-                    let (Just (scores, missed), gs'') = S.runState endGame gs'
-                    writeTVar gs gs''
-                    writeTChan outp (SendMsg (channel conf) "Time's up!")
-                    let scores' = L.reverse $ sortBy (compare `on` snd) scores
-                    forM_ scores' $ \(p, s) -> do
-                        let msg = p <> " : " <> fromString (show s)
-                        writeTChan outp (SendMsg (channel conf) msg)
-                    forM_ (chunkWords missed) $ \miss -> do
-                        writeTChan outp (SendMsg (channel conf) ("Missed Words: " <>
-                            BS.intercalate ", " miss))
+                Just (_, msg) -> do
+                    liftIO $ atomically $ writeTChan inp (Right msg)
+                    tcSink
+
     forkIO $ tcSource $$ appSink app
     appSource app =$= conduitParser parseMessage $$ tcSink
 
@@ -109,31 +93,49 @@ chunkWords = ($ []) . chunk' 0 id where
         | c > 100 = (f []:) . chunk' 0 id l
         | otherwise = chunk' (c + BS.length x) (f . (x:)) xs
 
-playGame :: Trie -> BS.ByteString -> Message ->
-    S.State GameState (Bool, [Response])
-playGame t ch (PrivMsg (User usr _) ch' txt)
-    | ch == ch' = do
-        r <- gameRunning 
-        case (r, txt == "Boggle Time", txt == "!board") of
-            (True, _, showBoard) -> do
-                let bs = catMaybes . fmap sanitize . BS.split 32 $ txt
-                mapM_ (scoreWord usr) bs
-                if showBoard
-                    then do
-                        Just b <- getBoard
-                        return (False, fmap (SendMsg ch) (boardLines b))
-                    else return (False, [])
-            (False, True, _) -> do
-                newGame t
-                (_, Just (b, ws, _)) <- S.get
-                let xs = fmap (SendMsg ch) (boardLines b)
-                    btmsg = SendMsg ch "It's Boggle Time!"
-                    msmsg = SendMsg ch ("Maximum Score " <> fromString (show ms))
-                    ms = getSum $ foldMap (Sum . wordValue) ws
-                return (True, btmsg:msmsg:xs)
-            _ -> return (False, [])
-    | otherwise = return (False, [])
-playGame _ _ _ = return (False, [])
+boggleBot :: BS.ByteString -> Trie -> B.Bot GameState ()
+boggleBot ch t = forever bb where
+    bb = do
+        r <- gameRunning
+        B.await >>= handle r . cap
+    cap (Just (PrivMsg u c m)) = Just $ PrivMsg u c $ BS.map capW8 m
+    cap m = m
+    capW8 c
+        | c >= 97 && c <= 122 = c - 32
+        | otherwise = c
+    sendMsg = B.respond . SendMsg ch
+    handle True (Just (PrivMsg u _ "!BOARD")) = do
+        (_, Just (b, _, _, _)) <- S.get
+        forM_ (boardLines b) $ \l -> do
+            sendMsg l
+    handle True (Just (PrivMsg (User usr _) _ m)) = do
+        let bs = catMaybes . fmap sanitize . BS.split 32 $ m
+        mapM_ (scoreWord usr) bs
+    handle True Nothing = do
+        (g, Just (b, ws, ss, w)) <- S.get
+        if w
+            then do
+                Just (scores, missed) <- endGame
+                sendMsg "Time's up!"
+                let scores' = L.reverse $ sortBy (compare `on` snd) scores
+                forM_ scores' $ \(p, s) -> do
+                    sendMsg (p <> " : " <> fromString (show s))
+                forM_ (chunkWords missed) $ \miss -> do
+                    sendMsg ("Missed Words: " <> BS.intercalate ", " miss)
+            else do
+                S.put (g, Just (b, ws, ss, True))
+                sendMsg "1 Minute Remaining"
+                B.timeout 60000000
+    handle _ (Just (PrivMsg u _ "BOGGLE TIME")) = do
+        newGame t
+        B.timeout 120000000
+        (_, Just (b, ws, _, _)) <- S.get
+        sendMsg "It's Boggle Time!"
+        let ms = getSum $ foldMap (Sum . wordValue) ws
+        sendMsg ("Maximum Score " <> fromString (show ms))
+        forM_ (boardLines b) $ \l -> do
+            sendMsg l
+    handle _ _ = return ()
 
 main = do 
     [conf'] <- getArgs
@@ -147,4 +149,4 @@ main = do
             Prelude.putStrLn $ "Total Word Count: " ++
                 show (L.length (fullDict d))
             bot d conf
-    
+

@@ -20,6 +20,8 @@ executable bogglebot
   other-modules:       Data.Trie
                       ,Game.Boggle
                       ,Network.IRC
+                      ,Network.IRC.Bot
+                      ,Network.IRC.Bot.STM
 
   -- other-extensions:    
   build-depends:       base >=4.5 && <4.9
@@ -35,6 +37,8 @@ executable bogglebot
                       ,tls
                       ,network-conduit-tls
                       ,stm
+                      ,free
+                      ,transformers
 
   hs-source-dirs:      src
   default-language:    Haskell2010

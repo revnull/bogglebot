@@ -10,6 +10,8 @@ module Game.Boggle(
                   ,gameRunning
                   ,getBoard
                   ,scoreWord
+                  ,warn
+                  ,hasWarned
                   ,wordValue
                   ,endGame
                    ) where
@@ -164,46 +166,60 @@ wordValue = (fibs !!) . (\x -> x - 3) . BS.length where
     fibs = 1:1:zipWith (+) fibs (tail fibs)
 
 type GameState =
-    (StdGen, Maybe (Board, S.Set BS.ByteString, M.Map BS.ByteString Word32))
+    (StdGen, Maybe (Board, S.Set BS.ByteString, M.Map BS.ByteString Word32, Bool))
 
-gameRunning :: State GameState Bool
+gameRunning :: MonadState GameState m => m Bool
 gameRunning = (isJust . snd) <$> get
 
-newGame :: Trie -> State GameState Bool
+newGame :: MonadState GameState m => Trie -> m Bool
 newGame t = do
     new <- not <$> gameRunning
     when new $ do
         (g, _) <- get
         let (b, g') = runState (state randomBoard) g
             words = S.fromList $ solver b t
-        put (g', Just (b, words, M.empty))
+        put (g', Just (b, words, M.empty, False))
     return new
 
-getBoard :: State GameState (Maybe Board)
+getBoard :: MonadState GameState m => m (Maybe Board)
 getBoard = do
     r <- gameRunning
     if r
         then do
-            (_, Just (b, _, _)) <- get
+            (_, Just (b, _, _, _)) <- get
             return (Just b)
         else return Nothing 
 
-scoreWord :: BS.ByteString -> BS.ByteString -> State GameState ()
+scoreWord :: MonadState GameState m =>
+    BS.ByteString -> BS.ByteString -> m ()
 scoreWord p w = do
     r <- gameRunning
     when r $ do
-        (g, Just (b, ws, ss)) <- get
+        (g, Just (b, ws, ss, sw)) <- get
         when (S.member w ws) $ do
             let wv = wordValue w
                 score Nothing = Just wv
                 score (Just i) = Just (i + wv)
-            put (g, Just (b, S.delete w ws, M.alter score p ss))
+            put (g, Just (b, S.delete w ws, M.alter score p ss, sw))
 
-endGame :: State GameState (Maybe ([(BS.ByteString, Word32)],[BS.ByteString]))
+warn :: MonadState GameState m => m ()
+warn = get >>= warn' where
+    warn' (g, Just (b, ws, ss, True)) =
+        fail "Duplicate Warning"
+    warn' (g, Just (b, ws, ss, _)) =
+        put (g, Just (b, ws, ss, True))
+    warn' _ = return ()
+
+hasWarned :: MonadState GameState m => m Bool
+hasWarned = get >>= return . hw where
+    hw (g, Just (_, _, _, w)) = w
+    hw _ = False
+
+endGame :: MonadState GameState m => 
+    m (Maybe ([(BS.ByteString, Word32)],[BS.ByteString]))
 endGame = gameRunning >>= end where
     end False = return Nothing
     end _ = do
-        (g, Just (_, missed, ss)) <- get
+        (g, Just (_, missed, ss, _)) <- get
         put (g, Nothing)
         return (Just (M.toList ss, S.toList missed))
-
