@@ -16,9 +16,10 @@ import System.Random
 import Network.IRC
 import qualified Network.IRC.Bot as B
 import Network.IRC.Bot.STM
+import Network.Connection
 import Network.TLS
 import System.Environment
-import Data.ConfigFile
+import Data.ConfigFile as CF
 import Data.ByteString as BS
 import Data.ByteString.Lazy as BSL
 import Data.Conduit
@@ -33,42 +34,54 @@ data Config = Config {
     host :: BS.ByteString,
     port :: Int,
     ident :: BS.ByteString,
-    channel :: BS.ByteString
+    channel :: BS.ByteString,
+    password :: Maybe BS.ByteString,
+    insecure :: Bool
 } deriving (Read, Show, Eq, Ord)
 
 parseConfig :: (MonadError CPError m, MonadIO m, Alternative m, Monad m) =>
     ConfigParser -> m Config
-parseConfig conf = Config <$>
-    get conf "DEFAULT" "host" <*>
-    get conf "DEFAULT" "port" <*>
-    get conf "DEFAULT" "ident" <*>
-    get conf "DEFAULT" "channel"
+parseConfig conf = do
+    conf' <- set conf "DEFAULT" "insecure_mode" "False"
+    Config <$>
+        get conf' "DEFAULT" "host" <*>
+        get conf' "DEFAULT" "port" <*>
+        get conf' "DEFAULT" "ident" <*>
+        get conf' "DEFAULT" "channel" <*>
+        (get conf' "DEFAULT" "password" <|> return Nothing) <*>
+        get conf' "DEFAULT" "insecure_mode"
 
 instance Monoid CPErrorData where
     mempty = OtherProblem "mempty Error"
     mappend (OtherProblem "mempty Error") y = y
     mappend x _ = x
 
-startBots :: Trie -> StdGen -> BS.ByteString -> B.Bot () ()
-startBots t g ch = do
+startBots :: Trie -> StdGen -> Config -> B.Bot () ()
+startBots t g conf = do
+    let ch = channel conf
+    B.respond (Nick (ident conf))
+    B.respond (Login (ident conf))
+    case password conf of
+        Just pw -> B.respond $ SendMsg "NickServ" $ "IDENTIFY " <> pw
+        _ -> return ()
     B.fork () B.pingBot
     B.fork (g, Nothing) (B.runChannel ch $ boggleBot ch t)
 
 bot :: Trie -> Config -> IO ()
 bot t conf = do
-    let c' = tlsClientConfig (port conf) (host conf)
+    let c' = if insecure conf
+        then (tlsClientConfig (port conf) (host conf)) {
+                tlsClientTLSSettings = TLSSettingsSimple True True True
+            }
+        else tlsClientConfig (port conf) (host conf)
     runTLSClient c' (handler conf t)
 
 handler :: Config -> Trie -> AppData -> IO ()
 handler conf t app = do
     inp <- newTChanIO
     outp <- newTChanIO
-    atomically $ do
-        writeTChan outp (Nick (ident conf))
-        writeTChan outp (Login (ident conf))
-        writeTChan outp (JoinChannel (channel conf))
     g <- newStdGen
-    newBot inp outp () $ startBots t g (channel conf)
+    newBot inp outp () $ startBots t g conf
     let tcSource = forever $ do
             resp <- liftIO . atomically $ readTChan outp
             yield (BSL.toStrict $ encodeResponse resp)
