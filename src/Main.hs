@@ -41,15 +41,13 @@ data Config = Config {
 
 parseConfig :: (MonadError CPError m, MonadIO m, Alternative m, Monad m) =>
     ConfigParser -> m Config
-parseConfig conf = do
-    conf' <- set conf "DEFAULT" "insecure_mode" "False"
-    Config <$>
-        get conf' "DEFAULT" "host" <*>
-        get conf' "DEFAULT" "port" <*>
-        get conf' "DEFAULT" "ident" <*>
-        get conf' "DEFAULT" "channel" <*>
-        (get conf' "DEFAULT" "password" <|> return Nothing) <*>
-        get conf' "DEFAULT" "insecure_mode"
+parseConfig conf = Config <$>
+    get conf "DEFAULT" "host" <*>
+    get conf "DEFAULT" "port" <*>
+    get conf "DEFAULT" "ident" <*>
+    get conf "DEFAULT" "channel" <*>
+    (get conf "DEFAULT" "password" <|> return Nothing) <*>
+    (get conf "DEFAULT" "insecure_mode" <|> return False)
 
 instance Monoid CPErrorData where
     mempty = OtherProblem "mempty Error"
@@ -58,13 +56,15 @@ instance Monoid CPErrorData where
 
 startBots :: Trie -> StdGen -> Config -> B.Bot () ()
 startBots t g conf = do
+    B.fork () B.pingBot
     let ch = channel conf
     B.respond (Nick (ident conf))
     B.respond (Login (ident conf))
     case password conf of
         Just pw -> B.respond $ SendMsg "NickServ" $ "IDENTIFY " <> pw
         _ -> return ()
-    B.fork () B.pingBot
+    B.timeout 15000000
+    void $ B.waitFor isNothing
     B.fork (g, Nothing) (B.runChannel ch $ boggleBot ch t)
 
 bot :: Trie -> Config -> IO ()

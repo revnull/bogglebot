@@ -14,6 +14,7 @@ module Network.IRC.Bot (
                        ,echoBot
                        ) where
 
+import Control.Applicative
 import Control.Monad
 import Data.ByteString as BS
 import Control.Monad.State.Class

@@ -168,10 +168,10 @@ wordValue = (fibs !!) . (\x -> x - 3) . BS.length where
 type GameState =
     (StdGen, Maybe (Board, S.Set BS.ByteString, M.Map BS.ByteString Word32, Bool))
 
-gameRunning :: MonadState GameState m => m Bool
+gameRunning :: (Functor m, MonadState GameState m) => m Bool
 gameRunning = (isJust . snd) <$> get
 
-newGame :: MonadState GameState m => Trie -> m Bool
+newGame :: (Functor m, MonadState GameState m) => Trie -> m Bool
 newGame t = do
     new <- not <$> gameRunning
     when new $ do
@@ -181,7 +181,7 @@ newGame t = do
         put (g', Just (b, words, M.empty, False))
     return new
 
-getBoard :: MonadState GameState m => m (Maybe Board)
+getBoard :: (Functor m, MonadState GameState m) => m (Maybe Board)
 getBoard = do
     r <- gameRunning
     if r
@@ -190,7 +190,7 @@ getBoard = do
             return (Just b)
         else return Nothing 
 
-scoreWord :: MonadState GameState m =>
+scoreWord :: (Functor m, MonadState GameState m) =>
     BS.ByteString -> BS.ByteString -> m ()
 scoreWord p w = do
     r <- gameRunning
@@ -215,7 +215,7 @@ hasWarned = get >>= return . hw where
     hw (g, Just (_, _, _, w)) = w
     hw _ = False
 
-endGame :: MonadState GameState m => 
+endGame :: (Functor m, MonadState GameState m) => 
     m (Maybe ([(BS.ByteString, Word32)],[BS.ByteString]))
 endGame = gameRunning >>= end where
     end False = return Nothing

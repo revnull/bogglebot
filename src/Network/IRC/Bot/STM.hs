@@ -5,6 +5,7 @@ module Network.IRC.Bot.STM (
                            ,newBot
                            ) where
 
+import Control.Applicative
 import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Monad
