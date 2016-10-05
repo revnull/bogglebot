@@ -4,6 +4,7 @@ module Network.IRC (
                     Message(..)
                    ,msgChannel
                    ,User(..)
+                   ,Channel
                    ,Response(..)
                    ,parseMessage
                    ,encodeResponse
@@ -20,11 +21,14 @@ import Prelude hiding (takeWhile)
 data User = User BS.ByteString BS.ByteString
   deriving (Read, Show, Eq, Ord)
 
+type Channel = BS.ByteString
+
 data Message = 
     Ping BS.ByteString
-  | PrivMsg User BS.ByteString BS.ByteString
-  | Join User BS.ByteString
-  | Quit User BS.ByteString
+  | PrivMsg User Channel BS.ByteString
+  | Join User Channel
+  | Quit User Channel
+  | Timeout (Maybe Channel)
   | Unknown BS.ByteString
   deriving (Read, Show, Eq, Ord)
 
@@ -32,15 +36,16 @@ msgChannel :: Message -> Maybe BS.ByteString
 msgChannel (PrivMsg _ ch _) = Just ch
 msgChannel (Join _ ch) = Just ch
 msgChannel (Quit _ ch) = Just ch
+msgChannel (Timeout mch) = mch
 msgChannel _ = Nothing
 
 data Response =
     Pong BS.ByteString
   | Nick BS.ByteString
   | Login BS.ByteString
-  | SendMsg BS.ByteString BS.ByteString
-  | JoinChannel BS.ByteString
-  | QuitChannel BS.ByteString
+  | SendMsg Channel BS.ByteString
+  | JoinChannel Channel
+  | QuitChannel Channel
   deriving (Read, Show, Eq, Ord)
 
 parseMessage :: Parser Message
