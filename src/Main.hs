@@ -57,35 +57,31 @@ instance Monoid CPErrorData where
     mappend (OtherProblem "mempty Error") y = y
     mappend x _ = x
 
-bot :: Trie -> Config ->
-    Bot (Bool, Bool, GameState) Message Response ()
-bot t conf = do
+bot :: Trie -> Config -> StdGen -> Bot Message Response ()
+bot t conf g = do
     let ch = channel conf
 
-    pingBot
+    fork $ pingBot
     
-    (init, logged, _) <- S.get
+    timeout 1000000
+    void $ waitFor isTimeout
 
-    unless init $ do
-        writeOut (Nick (ident conf))
-        writeOut (Login (ident conf))
-        _1 .= True
+    writeOut (Nick (ident conf))
+    writeOut (Login (ident conf))
+    timeout 10000000
 
-        case password conf of
-            Just pw -> do
-                writeOut (SendMsg "NickServ" $ "IDENTIFY " <> pw)
-                _2 .= False
-                timeout 15000000
-            _ -> do
-                _2 .= True
-                writeOut (JoinChannel ch)
+    void $ waitFor isTimeout
 
-    unless logged $ do
-        handleTimeout $ do
-            writeOut (JoinChannel ch)
-            _2 .= True
+    case password conf of
+        Just pw -> do
+            writeOut (SendMsg "NickServ" $ "IDENTIFY " <> pw)
+            timeout 10000000
+            void $ waitFor isTimeout
+        _ -> return ()
 
-    when logged $ botState _3 $ boggleBot t ch
+    writeOut (JoinChannel ch)
+
+    boggleBot t ch g
 
 runBotIO :: Trie -> Config -> IO ()
 runBotIO t conf = do
@@ -99,7 +95,7 @@ runBotIO t conf = do
 handler :: Config -> Trie -> AppData -> IO ()
 handler conf t app = do
     g <- newStdGen
-    (inp, outp) <- startBot (False, False, (g, Nothing)) (bot t conf)
+    (inp, outp) <- startBot (bot t conf g)
 
     let tcSource = forever $ do
             resp <- liftIO . atomically $ readTChan outp
@@ -107,7 +103,6 @@ handler conf t app = do
             yield "\n"
         tcSink = do
             msg <- await
-            liftIO $ print msg
             case msg of
                 Nothing -> return ()
                 Just (_, msg) -> do

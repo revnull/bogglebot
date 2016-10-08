@@ -3,9 +3,12 @@
 module Network.IRC (
                     Message(..)
                    ,msgChannel
+                   ,isTimeout
+                   ,isPing
                    ,User(..)
                    ,Channel
                    ,Response(..)
+                   ,setChannel
                    ,parseMessage
                    ,encodeResponse
                    ) where
@@ -39,6 +42,14 @@ msgChannel (Quit _ ch) = Just ch
 msgChannel (Timeout mch) = mch
 msgChannel _ = Nothing
 
+isTimeout :: Message -> Bool
+isTimeout (Timeout _) = True
+isTimeout _ = False
+
+isPing :: Message -> Bool
+isPing (Ping _) = True
+isPing _ = False
+
 data Response =
     Pong BS.ByteString
   | Nick BS.ByteString
@@ -46,7 +57,13 @@ data Response =
   | SendMsg Channel BS.ByteString
   | JoinChannel Channel
   | QuitChannel Channel
+  | SendTimeout Int (Maybe Channel)
   deriving (Read, Show, Eq, Ord)
+
+setChannel :: Channel -> Response -> Response
+setChannel ch (SendMsg _ a) = SendMsg ch a
+setChannel ch (SendTimeout i _) = SendTimeout i (Just ch)
+setChannel _ r = r
 
 parseMessage :: Parser Message
 parseMessage = (message <|> unknown) <* word8 13 <* word8 10 where

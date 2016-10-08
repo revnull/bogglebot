@@ -1,31 +1,67 @@
 
 module Network.IRC.Bot.RWS (
-                            interpret
-                           ,BotResponse
-                           ,runRWSBot
+                            stepBots
+                           ,initialBot
                            ) where
 
 import Control.Applicative
+import Control.Monad.Free.Church
+import Control.Monad.RWS as RWS hiding (mapM)
+import Data.Either
+import Data.Monoid
+import Data.List
+import qualified Data.Sequence as Seq
+import Data.Traversable
+import Prelude hiding (mapM)
+
 import Network.IRC
 import Network.IRC.Bot
-import Control.Monad.Free.Church
-import Control.Monad.RWS as RWS
-import Data.Monoid
 
-type BotResponse o = Either (Maybe Channel, Int) o
+type ExecOut i o = Endo [Either SystemMessage o]
 
-type RWSBot s i o = RWS i (Endo [BotResponse o]) s
+type RWSBot i o = RWS i (ExecOut i o) Bool
 
-interpret :: Bot s i o a -> RWSBot s i o a
-interpret = foldF int . runBot where
-    int (ReadIn f) = f <$> ask
-    int (WriteOut o a) = tell (Endo (Right o:)) >> return a
-    int (GetState f) = f <$> get
-    int (PutState s a) = put s >> return a
-    int (MapState f a) = get >>= put . f >> return a
-    int (PutTimeout mch i a) = tell (Endo (Left (mch, i):)) >> return a
+data Exec i o = Running (RWSBot i o (Exec i o)) | Halted
 
-runRWSBot :: RWSBot s i o a -> i -> s -> (a, s, [BotResponse o])
-runRWSBot b i s = (a, s', appEndo o []) where
-    (a, s', o) = runRWS b i s
+isRunning :: Exec i o -> Bool
+isRunning (Running _) = True
+isRunning _ = False
+
+startBot :: Bot i o a -> RWSBot i o (Exec i o)
+startBot b = put False >> iterM phi (b >> return Halted) where
+    phi (ReadIn p g) = filtAsk p g
+    phi (WriteOut o a) = tell' (Right o) >> a           
+    phi (System sm a) = tell' (Left sm) >> a
+
+    filtAsk p g = do
+        wait <- get
+        i <- ask
+        if not wait && p i
+            then do
+                put True
+                g i
+            else
+                return (Running (put False >> filtAsk p g))
+
+    tell' = tell . Endo . (:)
+
+stepBot :: Exec i o -> RWSBot i o (Exec i o)
+stepBot Halted = return Halted
+stepBot (Running b) = b
+
+type Bots = Seq.Seq (Exec Message Response)
+
+stepBots :: Message -> Bots -> (Bots , [SystemMessage], [Response])
+stepBots i bots = (bots'' <> new', sys', os) where
+    (bots', _, out) = runRWS (mapM exec bots) i False
+    bots'' = Seq.filter isRunning bots'
+    exec b = put False >> stepBot b
+    (sys, os) = partitionEithers (appEndo out [])
+    (new, sys') = partition forks sys
+    forks (Fork _) = True
+    forks _ = False
+    new' = Seq.fromList $ fmap (Running . startBot) [b | Fork b <- new]
+
+initialBot :: Bot Message Response a -> Bots
+initialBot b = Seq.singleton (Running $ startBot b)
 

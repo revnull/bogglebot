@@ -4,11 +4,13 @@
 module Network.IRC.Bot (
                         BotF(..)
                        ,Bot(..)
+                       ,SystemMessage(..)
                        ,readIn
+                       ,waitFor
                        ,writeOut
                        ,timeout
                        ,channelTimeout
-                       ,botState
+                       ,fork
                        ,handleChannel
                        ,handleJoin'
                        ,handleJoin
@@ -29,128 +31,103 @@ import Control.Monad.State.Class
 import qualified Data.ByteString as BS
 import Network.IRC
 
-data BotF s i o a =
-    ReadIn (i -> a)
+data SystemMessage =
+    SetTimeout (Maybe Channel) Int
+  | Fork (Bot Message Response ())
+
+data BotF i o a =
+    ReadIn (i -> Bool) (i -> a)
   | WriteOut o a
-  | GetState (s -> a)
-  | PutState s a
-  | MapState (s -> s) a
-  | PutTimeout (Maybe Channel) Int a
+  | System SystemMessage a
 
-instance Functor (BotF s i o) where
-    fmap f (ReadIn g) = ReadIn (f . g)
+type Bot i o = F (BotF i o)
+
+instance Functor (BotF i o) where
+    fmap f (ReadIn p g) = ReadIn p (f . g)
     fmap f (WriteOut o a) = WriteOut o (f a)
-    fmap f (GetState g) = GetState (f . g)
-    fmap f (PutState s a) = PutState s (f a)
-    fmap f (MapState g a) = MapState g (f a)
-    fmap f (PutTimeout mch i a) = PutTimeout mch i (f a)
+    fmap f (System r a) = System r (f a)
 
-newtype Bot s i o a = Bot { runBot :: F (BotF s i o) a }
+readIn :: Bot i o i
+readIn = liftF $ ReadIn (const True) id
 
-instance Functor (Bot s i o) where
-    fmap f (Bot b) = Bot $ fmap f b
+waitFor :: (i -> Bool) -> Bot i o i
+waitFor pred = liftF $ ReadIn pred id
 
-instance Applicative (Bot s i o) where
-    pure = Bot . return
-    Bot ab <*> Bot a = Bot $ ab <*> a
+writeOut :: o -> Bot i o ()
+writeOut o = liftF $ WriteOut o ()
 
-instance Monad (Bot s i o) where
-    return = pure
-    Bot a >>= f = Bot $ do
-        a' <- a
-        runBot (f a')
+system :: SystemMessage -> Bot i o ()
+system sm = liftF $ System sm ()
 
-instance MonadState s (Bot s i o) where
-    get = Bot . liftF $ GetState id
-    put s = Bot . liftF $ PutState s ()
+fork :: Bot Message Response () -> Bot i o ()
+fork = system . Fork
 
-constLens :: b -> Lens a a b c
-constLens b = lens (const b) const
+timeout :: Int -> Bot i o ()
+timeout = system . SetTimeout Nothing
 
-unitLens :: Lens a a () b
-unitLens = constLens ()
+channelTimeout :: Channel -> Int -> Bot i o ()
+channelTimeout ch = system . SetTimeout (Just ch)
 
-_id :: Lens' a a
-_id f a = fmap id (f a)
-
-readIn :: Bot s i o i
-readIn = Bot . liftF $ ReadIn id
-
-writeOut :: o -> Bot s i o ()
-writeOut o = Bot . liftF $ WriteOut o ()
-
-timeout :: Int -> Bot s i o ()
-timeout i = Bot $ liftF $ PutTimeout Nothing i ()
-
-channelTimeout :: Channel -> Int -> Bot s i o ()
-channelTimeout ch i = Bot $ liftF $ PutTimeout (Just ch) i ()
-
-subBot :: Lens' s s' -> (i -> i') -> (o' -> o) -> Bot s' i' o' a -> Bot s i o a
-subBot l im om = Bot . hoistF phi . runBot where
-    phi (ReadIn f) = ReadIn (f . im)
+subBot :: (i -> i') -> (o' -> o) -> Bot i' o' a -> Bot i o a
+subBot im om = hoistF phi where
+    phi (ReadIn p f) = ReadIn (p . im) (f . im)
     phi (WriteOut o a) = WriteOut (om o) a
-    phi (GetState f) = GetState (f . (^.l))
-    phi (PutState s a) = MapState (set l s) a
-    phi (MapState f a) = MapState setLens a where
-        setLens s = set l (f $ s^.l) s
-    phi (PutTimeout mch i a) = PutTimeout mch i a
+    phi (System sm a) = System sm a
 
-botState :: Lens' s s' -> Bot s' i o a -> Bot s i o a
-botState l = subBot l id id
+filterBot :: (i -> Bool) -> Bot i o a -> Bot i o a
+filterBot filt = hoistF phi where
+    phi (ReadIn p f) = ReadIn (\i -> filt i && p i) f
+    phi x = x
 
-handleChannel :: Channel -> Bot s Message BS.ByteString () ->
-    Bot s Message Response ()
-handleChannel ch b = do
-    r <- readIn
-    when (msgChannel r == Just ch) $
-        subBot _id id (SendMsg ch) b
+handleChannel :: Channel -> Bot Message BS.ByteString () ->
+    Bot Message Response ()
+handleChannel ch b = filterBot ((Just ch ==) . msgChannel) $
+    subBot id (SendMsg ch) b
 
-handleJoin' :: Bot s (Channel, User) o () -> Bot s Message o ()
+handleJoin' :: Bot (Channel, User) o () -> Bot Message o ()
 handleJoin' b = do
     r <- readIn
     case r of
-        Join u ch -> subBot _id (const (ch, u)) id b
+        Join u ch -> subBot (const (ch, u)) id b
         _ -> return ()
 
-handleJoin :: Bot s User o () -> Bot s Message o ()
-handleJoin = handleJoin' . subBot _id snd id
+handleJoin :: Bot User o () -> Bot Message o ()
+handleJoin = handleJoin' . subBot snd id
 
-handleQuit' :: Bot s (Channel, User) o () -> Bot s Message o ()
+handleQuit' :: Bot (Channel, User) o () -> Bot Message o ()
 handleQuit' b = do
     r <- readIn
     case r of
-        Quit u ch -> subBot _id (const (ch, u)) id b
+        Quit u ch -> subBot (const (ch, u)) id b
         _ -> return ()
 
-handleQuit :: Bot s User o () -> Bot s Message o ()
-handleQuit = handleQuit' . subBot _id snd id
+handleQuit :: Bot User o () -> Bot Message o ()
+handleQuit = handleQuit' . subBot snd id
 
-handlePrivMsg' :: Bot s (Channel, (User, BS.ByteString)) o () ->
-    Bot s Message o ()
+handlePrivMsg' :: Bot (Channel, (User, BS.ByteString)) o () ->
+    Bot Message o ()
 handlePrivMsg' b = do
     r <- readIn
     case r of
-        PrivMsg u ch v -> subBot _id (const (ch, (u, v))) id b
+        PrivMsg u ch v -> subBot (const (ch, (u, v))) id b
         _ -> return ()
 
-handlePrivMsg :: Bot s (User, BS.ByteString) o () -> Bot s Message o ()
-handlePrivMsg = handlePrivMsg' . subBot _id snd id
+handlePrivMsg :: Bot (User, BS.ByteString) o () -> Bot Message o ()
+handlePrivMsg = handlePrivMsg' . subBot snd id
 
-handleTimeout :: Bot s (Maybe Channel) o () -> Bot s Message o ()
+handleTimeout :: Bot (Maybe Channel) o () -> Bot Message o ()
 handleTimeout b = do
     r <- readIn
     case r of
-        Timeout mch -> subBot _id (const mch) id b
+        Timeout mch -> subBot (const mch) id b
         _ -> return ()
 
-pingBot :: Bot s Message Response ()
-pingBot = do
-    r <- readIn
-    case r of
-        Ping msg -> writeOut (Pong msg)
-        _ -> return ()
+pingBot :: Bot Message Response ()
+pingBot = forever $ do
+    Ping msg <- waitFor isPing
+    writeOut (Pong msg)
 
-echoBot :: Channel -> Bot s Message Response ()
+echoBot :: Channel -> Bot Message Response ()
 echoBot ch = handleChannel ch . handlePrivMsg $ do
     (_, msg) <- readIn
     writeOut msg
