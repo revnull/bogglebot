@@ -3,7 +3,6 @@
 module Network.IRC (
                     Message(..)
                    ,msgChannel
-                   ,isTimeout
                    ,isPing
                    ,User(..)
                    ,Channel
@@ -31,7 +30,6 @@ data Message =
   | PrivMsg User Channel BS.ByteString
   | Join User Channel
   | Quit User Channel
-  | Timeout (Maybe Channel)
   | Command BS.ByteString Int BS.ByteString
   | Notice BS.ByteString BS.ByteString BS.ByteString
   | Unknown BS.ByteString
@@ -41,12 +39,7 @@ msgChannel :: Message -> Maybe BS.ByteString
 msgChannel (PrivMsg _ ch _) = Just ch
 msgChannel (Join _ ch) = Just ch
 msgChannel (Quit _ ch) = Just ch
-msgChannel (Timeout mch) = mch
 msgChannel _ = Nothing
-
-isTimeout :: Message -> Bool
-isTimeout (Timeout _) = True
-isTimeout _ = False
 
 isPing :: Message -> Bool
 isPing (Ping _) = True
@@ -59,12 +52,10 @@ data Response =
   | SendMsg Channel BS.ByteString
   | JoinChannel Channel
   | QuitChannel Channel
-  | SendTimeout Int (Maybe Channel)
   deriving (Read, Show, Eq, Ord)
 
 setChannel :: Channel -> Response -> Response
 setChannel ch (SendMsg _ a) = SendMsg ch a
-setChannel ch (SendTimeout i _) = SendTimeout i (Just ch)
 setChannel _ r = r
 
 parseMessage :: Parser Message

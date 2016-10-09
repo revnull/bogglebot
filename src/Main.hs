@@ -3,7 +3,6 @@
 import Control.Applicative
 import Control.Concurrent hiding (yield)
 import Control.Concurrent.STM
-import Control.Lens
 import Control.Monad
 import qualified Control.Monad.State as S
 import Control.Monad.Except
@@ -57,7 +56,7 @@ instance Monoid CPErrorData where
     mappend (OtherProblem "mempty Error") y = y
     mappend x _ = x
 
-bot :: Trie -> Config -> StdGen -> Bot Message Response ()
+bot :: Trie -> Config -> StdGen -> IRCBot ()
 bot t conf g = do
     let ch = channel conf
 
@@ -66,15 +65,15 @@ bot t conf g = do
     writeOut (Nick (ident conf))
     writeOut (Login (ident conf))
 
-    let comm4 (Command _ 4 _) = True
-        comm4 _ = False
+    let comm4 (Command _ 4 _) = Just ()
+        comm4 _ = Nothing
     waitFor comm4
 
     let pw = password conf
     when (not $ BS.null pw) $ do
         writeOut (SendMsg "NickServ" $ "IDENTIFY " <> pw)
         timeout 10000000
-        void $ waitFor isTimeout
+        waitFor' (\i -> guard (isTimeout i) >> return ())
 
     writeOut (JoinChannel ch)
 

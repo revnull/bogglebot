@@ -20,37 +20,38 @@ import Network.IRC.Bot
 import Network.IRC.Bot.RWS
 
 type InChan = TChan Message
+type BotInChan = TChan BotMessage
 type OutChan = TChan Response
-type TimeoutChan = TChan SystemMessage
+type TimeoutChan = TChan (Maybe Channel, Int)
 
 -- replace with something better
-startTimeoutThread :: InChan -> IO TimeoutChan
+startTimeoutThread :: BotInChan -> IO TimeoutChan
 startTimeoutThread inc = do
     ch <- newTChanIO
     forkIO $ forever $ do
-        (SetTimeout chan d) <- atomically $ readTChan ch
+        (chan, d) <- atomically $ readTChan ch
         forkIO $ do
             threadDelay d
             atomically $ writeTChan inc (Timeout chan)
     return ch
 
-startBot :: Bot Message Response () -> IO (InChan, OutChan)
+startBot :: IRCBot () -> IO (InChan, OutChan)
 startBot bot = do
     inc <- newTChanIO
+    bmin <- newTChanIO
     outc <- newTChanIO
-    toc <- startTimeoutThread inc
+    toc <- startTimeoutThread bmin
     forkIO $ void $ flip evalStateT (initialBot bot) $ forever $ do
         bots <- get 
-        msg <- liftIO . atomically $ readTChan inc
-        liftIO $ print msg
-        let (bots', sys, outs) = stepBots msg bots
+        msg <- liftIO . atomically $ do
+            empt <- isEmptyTChan inc
+            if empt then readTChan bmin else IRCMessage <$> readTChan inc
+        let (bots', outs) = stepBots msg bots
         liftIO $ atomically $ do
-            mapM_ (writeTChan toc) sys
-            mapM_ (writeTChan outc) outs
-        liftIO $ print outs
-        liftIO $ print (length sys)
-        liftIO $ print (Seq.length bots')
+            forM_ outs $ \out -> case out of
+                IRCResponse r -> writeTChan outc r
+                SetTimeout ch i -> writeTChan toc (ch, i)
         put bots'
-    atomically $ writeTChan inc (Timeout Nothing)
+    atomically $ writeTChan bmin Init
     return (inc, outc)
 

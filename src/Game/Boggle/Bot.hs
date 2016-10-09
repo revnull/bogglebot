@@ -39,14 +39,14 @@ capPM :: Message -> Message
 capPM (PrivMsg usr ch msg) = PrivMsg usr ch (cap msg)
 capPM x = x
 
-boggleBot :: Trie -> Channel -> StdGen -> Bot Message Response ()
+boggleBot :: Trie -> Channel -> StdGen -> IRCBot ()
 boggleBot t ch g = do
     handleChannel ch $ flip evalStateT (g, Nothing) $ forever $ do
-        msg <- lift $ capPM <$> readIn
+        msg <- lift $ fmap capPM <$> readIn'
         r <- gameRunning
         w <- hasWarned
         case (msg, r, w) of
-            (PrivMsg _ _ "BOGGLE TIME", False, _) -> do
+            (IRCMessage (PrivMsg _ _ "BOGGLE TIME"), False, _) -> do
                 void $ newGame t
                 lift $ channelTimeout ch 120000000
                 (_, Just (b, ws, _, _)) <- get
@@ -69,7 +69,7 @@ boggleBot t ch g = do
                 warn
                 lift $ writeOut "One minute remaining!"
                 lift $ channelTimeout ch 60000000
-            (PrivMsg (User usr _) _ str, _, _) -> do
+            (IRCMessage (PrivMsg (User usr _) _ str), _, _) -> do
                 let bs = catMaybes . fmap sanitize . BS.split 32 $ str
                 mapM_ (scoreWord usr) bs
 
