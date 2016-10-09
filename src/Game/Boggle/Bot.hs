@@ -41,7 +41,6 @@ capPM x = x
 
 boggleBot :: Trie -> Channel -> StdGen -> Bot Message Response ()
 boggleBot t ch g = do
-    writeOut (JoinChannel ch)
     handleChannel ch $ flip evalStateT (g, Nothing) $ forever $ do
         msg <- lift $ capPM <$> readIn
         r <- gameRunning
