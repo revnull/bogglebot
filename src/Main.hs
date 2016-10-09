@@ -36,7 +36,7 @@ data Config = Config {
     host :: BS.ByteString,
     port :: Int,
     ident :: BS.ByteString,
-    channel :: BS.ByteString,
+    chan :: BS.ByteString,
     password :: BS.ByteString,
     insecure :: Bool
 } deriving (Read, Show, Eq, Ord)
@@ -58,7 +58,7 @@ instance Monoid CPErrorData where
 
 bot :: Trie -> Config -> StdGen -> IRCBot ()
 bot t conf g = do
-    let ch = channel conf
+    let ch = chan conf
 
     fork $ pingBot
     

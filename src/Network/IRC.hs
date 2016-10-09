@@ -2,9 +2,15 @@
 
 module Network.IRC (
                     Message(..)
+                   ,channel
+                   ,payload
+                   ,user
+                   ,commandNumber
                    ,msgChannel
                    ,isPing
                    ,User(..)
+                   ,nick
+                   ,fullName
                    ,Channel
                    ,Response(..)
                    ,setChannel
@@ -13,6 +19,7 @@ module Network.IRC (
                    ) where
 
 import Control.Applicative
+import Control.Lens
 import Control.Monad hiding (join)
 import Data.Attoparsec.ByteString
 import qualified Data.ByteString as BS
@@ -22,6 +29,12 @@ import Prelude hiding (takeWhile, take)
 
 data User = User BS.ByteString BS.ByteString
   deriving (Read, Show, Eq, Ord)
+
+nick :: Lens' User BS.ByteString
+nick f (User ni fu) = (\ni' -> User ni' fu) <$> f ni
+
+fullName :: Lens' User BS.ByteString
+fullName f (User ni fu) = (User ni) <$> f fu
 
 type Channel = BS.ByteString
 
@@ -34,6 +47,29 @@ data Message =
   | Notice BS.ByteString BS.ByteString BS.ByteString
   | Unknown BS.ByteString
   deriving (Read, Show, Eq, Ord)
+
+channel :: Traversal' Message BS.ByteString
+channel f (PrivMsg u ch val) = PrivMsg u <$> f ch <*> pure val
+channel f (Join u ch) = Join u <$> f ch
+channel f (Quit u ch) = Quit u <$> f ch
+channel _ x = pure x 
+
+payload :: Traversal' Message BS.ByteString
+payload f (Ping val) = Ping <$>  f val
+payload f (PrivMsg u ch val) = PrivMsg u ch <$> f val
+payload f (Command srv i val) = Command srv i <$> f val
+payload f (Notice a b val) = Notice a b <$> f val
+payload _ x = pure x
+
+user :: Traversal' Message User
+user f (PrivMsg usr ch val) = PrivMsg <$> f usr <*> pure ch <*> pure val
+user f (Join usr ch) = Join <$> f usr <*> pure ch
+user f (Quit usr ch) = Quit <$> f usr <*> pure ch
+user _ x = pure x
+
+commandNumber :: Traversal' Message Int
+commandNumber f (Command srv i val) = Command srv <$> f i <*> pure val
+commandNumber _ x = pure x
 
 msgChannel :: Message -> Maybe BS.ByteString
 msgChannel (PrivMsg _ ch _) = Just ch
