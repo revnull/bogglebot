@@ -38,7 +38,7 @@ data Config = Config {
     port :: Int,
     ident :: BS.ByteString,
     channel :: BS.ByteString,
-    password :: Maybe BS.ByteString,
+    password :: BS.ByteString,
     insecure :: Bool
 } deriving (Read, Show, Eq, Ord)
 
@@ -49,7 +49,7 @@ parseConfig conf = Config <$>
     get conf "DEFAULT" "port" <*>
     get conf "DEFAULT" "ident" <*>
     get conf "DEFAULT" "channel" <*>
-    (get conf "DEFAULT" "password" <|> return Nothing) <*>
+    (get conf "DEFAULT" "password" <|> return "") <*>
     (get conf "DEFAULT" "insecure_mode" <|> return False)
 
 instance Monoid CPErrorData where
@@ -63,21 +63,18 @@ bot t conf g = do
 
     fork $ pingBot
     
-    timeout 1000000
-    void $ waitFor isTimeout
-
     writeOut (Nick (ident conf))
     writeOut (Login (ident conf))
-    timeout 10000000
 
-    void $ waitFor isTimeout
+    let comm4 (Command _ 4 _) = True
+        comm4 _ = False
+    waitFor comm4
 
-    case password conf of
-        Just pw -> do
-            writeOut (SendMsg "NickServ" $ "IDENTIFY " <> pw)
-            timeout 10000000
-            void $ waitFor isTimeout
-        _ -> return ()
+    let pw = password conf
+    when (not $ BS.null pw) $ do
+        writeOut (SendMsg "NickServ" $ "IDENTIFY " <> pw)
+        timeout 10000000
+        void $ waitFor isTimeout
 
     writeOut (JoinChannel ch)
 
@@ -120,6 +117,7 @@ main = do
     case econf of
         Left err -> print err
         Right conf -> do
+            print conf
             d <- readDict "data/american.dict"
             Prelude.putStrLn $ "Total Word Count: " ++
                 show (L.length (fullDict d))

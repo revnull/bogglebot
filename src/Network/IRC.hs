@@ -19,7 +19,7 @@ import Data.Attoparsec.ByteString
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import Data.Monoid
-import Prelude hiding (takeWhile)
+import Prelude hiding (takeWhile, take)
 
 data User = User BS.ByteString BS.ByteString
   deriving (Read, Show, Eq, Ord)
@@ -32,6 +32,8 @@ data Message =
   | Join User Channel
   | Quit User Channel
   | Timeout (Maybe Channel)
+  | Command BS.ByteString Int BS.ByteString
+  | Notice BS.ByteString BS.ByteString BS.ByteString
   | Unknown BS.ByteString
   deriving (Read, Show, Eq, Ord)
 
@@ -67,7 +69,9 @@ setChannel _ r = r
 
 parseMessage :: Parser Message
 parseMessage = (message <|> unknown) <* word8 13 <* word8 10 where
-    message = ping <|> (user <*> (privmsg <|> join <|> quit))
+    message = ping <|>
+        (user <*> (privmsg <|> join <|> quit)) <|>
+        command <|> notice
     ping = string "PING " *> (Ping <$> takeWhile1 (/= 13))
     privmsg = do
         ch <- string " PRIVMSG " *> takeWhile1 notWS
@@ -85,9 +89,19 @@ parseMessage = (message <|> unknown) <* word8 13 <* word8 10 where
             (word8 58 *> takeWhile1 (noneOf [13,32,33]) <* word8 33) <*>
             (takeWhile notWS)
         return ($ usr)
+    command = Command <$> (word8 58 *> takeWhile1 notWS) <*>
+        (word8 32 *> commandNumber <* word8 32) <*>
+        takeWhile (/= 13)
+    notice = Notice <$> (word8 58 *> takeWhile1 notWS) <*>
+        (string " NOTICE " *> takeWhile1 (/= 58) <* word8 58) <*>
+        takeWhile (/= 13)
     unknown = Unknown <$> takeWhile (/= 13)
     noneOf l = not . flip elem l
     notWS = noneOf [32, 13]
+    commandNumber = toNum 100 <$> count 3 (satisfy isDigit)
+    isDigit i = i >= 48 && i <= 57
+    toNum _ [] = 0
+    toNum i (x:xs) = (fromIntegral x - 48) * i + toNum (i `div` 10) xs
 
 encodeResponse :: Response -> BSL.ByteString
 encodeResponse (Pong msg) = "PONG " <> BSL.fromStrict msg
