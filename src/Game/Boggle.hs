@@ -166,7 +166,8 @@ wordValue = (fibs !!) . (\x -> x - 3) . BS.length where
     fibs = 1:1:zipWith (+) fibs (tail fibs)
 
 type GameState =
-    (StdGen, Maybe (Board, S.Set BS.ByteString, M.Map BS.ByteString Word32, Bool))
+    (StdGen, Maybe (Board, S.Set BS.ByteString, M.Map BS.ByteString
+        (S.Set BS.ByteString), Bool))
 
 gameRunning :: (Functor m, MonadState GameState m) => m Bool
 gameRunning = (isJust . snd) <$> get
@@ -197,9 +198,8 @@ scoreWord p w = do
     when r $ do
         (g, Just (b, ws, ss, sw)) <- get
         when (S.member w ws) $ do
-            let wv = wordValue w
-                score Nothing = Just wv
-                score (Just i) = Just (i + wv)
+            let score Nothing = Just (S.singleton w)
+                score (Just i) = Just (S.singleton w <> i)
             put (g, Just (b, S.delete w ws, M.alter score p ss, sw))
 
 warn :: MonadState GameState m => m ()
@@ -216,10 +216,15 @@ hasWarned = get >>= return . hw where
     hw _ = False
 
 endGame :: (Functor m, MonadState GameState m) => 
-    m (Maybe ([(BS.ByteString, Word32)],[BS.ByteString]))
+    m (Maybe ([(BS.ByteString, [BS.ByteString], Word32)],[BS.ByteString]))
 endGame = gameRunning >>= end where
     end False = return Nothing
     end _ = do
         (g, Just (_, missed, ss, _)) <- get
         put (g, Nothing)
-        return (Just (M.toList ss, S.toList missed))
+        let ss' = do
+                (p, ws) <- M.toList ss
+                return (p, toList ws, getSum $ foldMap scores ws)
+        return (Just (ss', S.toList missed))
+    scores = Sum . wordValue
+

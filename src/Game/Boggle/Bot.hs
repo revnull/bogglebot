@@ -65,9 +65,11 @@ boggleBot t ch g = do
             (Timeout _, _, True) -> do
                 Just (scores, missed) <- zoom _2 $ endGame
                 lift $ writeOut "Time's up!"
-                let scores' = L.reverse $ sortBy (compare `on` snd) scores
-                forM_ scores' $ \(p, s) -> do
+                let scores' = L.reverse $ sortBy (compare `on` (^._3)) scores
+                forM_ scores' $ \(p, ws, s) -> do
                     lift $ writeOut (p <> " : " <> fromString (show s))
+                    forM_ (chunkWords ws) $ \ws' ->
+                        lift $ writeOut (p <> " : " <> BS.intercalate ", " ws')
                 forM_ (chunkWords missed) $ \miss -> do
                     lift $ writeOut
                         ("Missed Words: " <> BS.intercalate ", " miss)
