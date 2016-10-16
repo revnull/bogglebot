@@ -20,6 +20,7 @@ import Control.Applicative
 import Control.Lens
 import Control.Monad
 import Data.Foldable
+import Data.Function
 import Data.Monoid
 import Data.Word
 import Data.Array
@@ -178,9 +179,14 @@ newGame t = do
     new <- not <$> gameRunning
     when new $ do
         g <- use _1
-        let (b, g') = runState (state random) g
-            words = S.fromList $ solver b t
-        put (g', Just (b, words, M.empty, False))
+        let ((b, ws), g') = flip runState g $ do
+                bs <- forM [1..5 :: Int] $ \_ -> do
+                    b <- state random
+                    let ws = solver b t
+                    return (b, ws, getSum $ foldMap (Sum . wordValue) ws)
+                let (b, ws, _) = maximumBy (compare `on` (^._3)) bs
+                return (b, S.fromList ws)
+        put (g', Just (b, ws, M.empty, False))
     return new
 
 getBoard :: (Functor m, MonadState GameState m) => m (Maybe Board)
