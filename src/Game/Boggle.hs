@@ -1,8 +1,7 @@
 {-# LANGUAGE OverloadedStrings, DeriveFunctor, FlexibleContexts #-}
 
 module Game.Boggle(
-                   randomBoard
-                  ,solver
+                   solver
                   ,Board
                   ,boardLines
                   ,GameState
@@ -18,6 +17,7 @@ module Game.Boggle(
 
 import Prelude hiding (foldr)
 import Control.Applicative
+import Control.Lens
 import Control.Monad
 import Data.Foldable
 import Data.Monoid
@@ -64,9 +64,9 @@ letterFreqs = M.fromList [
     ("Z", [5, 1, 1, 1])
     ]
 
-type BoardGen = State (StdGen, Freqs) 
+type BoardGen g = State (g, Freqs) 
 
-randomLetter :: BoardGen BS.ByteString
+randomLetter :: RandomGen g => BoardGen g BS.ByteString
 randomLetter = state randLet where
     randLet (g, fs) = (a, (g', fs')) where
         fsum = getSum $ foldMap (Sum . head) fs
@@ -104,11 +104,12 @@ boardLines (Board arr) = xs where
 newBoard :: [BS.ByteString] -> Board
 newBoard = Board . array ((0,0),(3,3)) . zip coords
 
--- fix this
-randomBoard :: StdGen -> (Board, StdGen)
-randomBoard g = (newBoard l, g') where
-    (l, (g', _)) = runState brd (g, letterFreqs)
-    brd = forM ([0..15] :: [Int]) $ const (randomLetter)
+instance Random Board where
+    random g = (newBoard l, g') where
+        (l, (g', _)) = runState brd (g, letterFreqs)
+        brd = forM ([0..15] :: [Int]) $ const randomLetter
+
+    randomR = const random -- randomR doesn't make sense for this type
 
 data Pos = Pos {-# UNPACK #-} !(Int, Int) {-# UNPACK #-} !Word16
     deriving (Show)
@@ -170,14 +171,14 @@ type GameState =
         (S.Set BS.ByteString), Bool))
 
 gameRunning :: (Functor m, MonadState GameState m) => m Bool
-gameRunning = (isJust . snd) <$> get
+gameRunning = uses _2 isJust
 
 newGame :: (Functor m, MonadState GameState m) => Trie -> m Bool
 newGame t = do
     new <- not <$> gameRunning
     when new $ do
-        (g, _) <- get
-        let (b, g') = runState (state randomBoard) g
+        g <- use _1
+        let (b, g') = runState (state random) g
             words = S.fromList $ solver b t
         put (g', Just (b, words, M.empty, False))
     return new
@@ -186,9 +187,7 @@ getBoard :: (Functor m, MonadState GameState m) => m (Maybe Board)
 getBoard = do
     r <- gameRunning
     if r
-        then do
-            (_, Just (b, _, _, _)) <- get
-            return (Just b)
+        then uses _2 (^?_Just._1)
         else return Nothing 
 
 scoreWord :: (Functor m, MonadState GameState m) =>
@@ -196,32 +195,29 @@ scoreWord :: (Functor m, MonadState GameState m) =>
 scoreWord p w = do
     r <- gameRunning
     when r $ do
-        (g, Just (b, ws, ss, sw)) <- get
+        Just (b, ws, ss, sw) <- use _2
         when (S.member w ws) $ do
             let score Nothing = Just (S.singleton w)
                 score (Just i) = Just (S.singleton w <> i)
-            put (g, Just (b, S.delete w ws, M.alter score p ss, sw))
+            _2 .= Just (b, S.delete w ws, M.alter score p ss, sw)
 
 warn :: MonadState GameState m => m ()
-warn = get >>= warn' where
-    warn' (g, Just (b, ws, ss, True)) =
+warn = uses _2 (^?_Just._4) >>= warn' where
+    warn' (Just True) =
         fail "Duplicate Warning"
-    warn' (g, Just (b, ws, ss, _)) =
-        put (g, Just (b, ws, ss, True))
+    warn' (Just False) = _2._Just._4 .= True
     warn' _ = return ()
 
 hasWarned :: MonadState GameState m => m Bool
-hasWarned = get >>= return . hw where
-    hw (g, Just (_, _, _, w)) = w
-    hw _ = False
+hasWarned = uses _2 (^?_Just._4) >>= return . maybe False id
 
 endGame :: (Functor m, MonadState GameState m) => 
     m (Maybe ([(BS.ByteString, [BS.ByteString], Word32)],[BS.ByteString]))
 endGame = gameRunning >>= end where
     end False = return Nothing
     end _ = do
-        (g, Just (_, missed, ss, _)) <- get
-        put (g, Nothing)
+        Just (_, missed, ss, _) <- use _2
+        _2 .= Nothing
         let ss' = do
                 (p, ws) <- M.toList ss
                 return (p, toList ws, getSum $ foldMap scores ws)
