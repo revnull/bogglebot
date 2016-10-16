@@ -13,7 +13,6 @@ import qualified Data.Sequence as Seq
 import Data.Traversable
 import Prelude hiding (mapM)
 
-import Network.IRC
 import Network.IRC.Bot
 
 type ExecOut i o = Endo [o]
@@ -21,10 +20,6 @@ type ExecOut i o = Endo [o]
 type RWSBot i o = RWS i (ExecOut i o) Bool
 
 data Exec i o = Running (RWSBot i o (Exec i o)) | Halted
-
-isRunning :: Exec i o -> Bool
-isRunning (Running _) = True
-isRunning _ = False
 
 startBot :: RawBot i o a -> RWSBot i o (Exec i o)
 startBot b = put False >> iterM phi (b >> return Halted) where

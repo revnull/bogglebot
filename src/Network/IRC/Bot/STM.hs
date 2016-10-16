@@ -10,10 +10,7 @@ import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Monad
 import Control.Monad.Trans
-import Control.Monad.Free.Church
 import Control.Monad.State
-import Data.Either
-import qualified Data.Sequence as Seq
 
 import Network.IRC
 import Network.IRC.Bot
@@ -28,7 +25,7 @@ type TimeoutChan = TChan (Maybe Channel, Int)
 startTimeoutThread :: BotInChan -> IO TimeoutChan
 startTimeoutThread inc = do
     ch <- newTChanIO
-    forkIO $ forever $ do
+    void $ forkIO $ forever $ do
         (chan, d) <- atomically $ readTChan ch
         forkIO $ do
             threadDelay d
@@ -41,7 +38,7 @@ startBot bot = do
     bmin <- newTChanIO
     outc <- newTChanIO
     toc <- startTimeoutThread bmin
-    forkIO $ void $ flip evalStateT (initialBot bot) $ forever $ do
+    void $ forkIO $ void $ flip evalStateT (initialBot bot) $ forever $ do
         bots <- get 
         msg <- liftIO . atomically $ do
             empt <- isEmptyTChan inc
@@ -51,6 +48,7 @@ startBot bot = do
             forM_ outs $ \out -> case out of
                 IRCResponse r -> writeTChan outc r
                 SetTimeout ch i -> writeTChan toc (ch, i)
+                _ -> error "Unhandled BotResponse"
         put bots'
     atomically $ writeTChan bmin Init
     return (inc, outc)

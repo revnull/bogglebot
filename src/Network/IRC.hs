@@ -19,7 +19,7 @@ module Network.IRC (
                    ) where
 
 import Control.Applicative
-import Control.Lens
+import Control.Lens hiding (noneOf)
 import Control.Monad hiding (join)
 import Data.Attoparsec.ByteString
 import qualified Data.ByteString as BS
@@ -97,7 +97,7 @@ setChannel _ r = r
 parseMessage :: Parser Message
 parseMessage = (message <|> unknown) <* word8 13 <* word8 10 where
     message = ping <|>
-        (user <*> (privmsg <|> join <|> quit)) <|>
+        (fulluser <*> (privmsg <|> join <|> quit)) <|>
         command <|> notice
     ping = string "PING " *> (Ping <$> takeWhile1 (/= 13))
     privmsg = do
@@ -111,13 +111,13 @@ parseMessage = (message <|> unknown) <* word8 13 <* word8 10 where
     quit = do
         ch <- string " QUIT :" *> takeWhile1 (/= 13)
         return $ \usr -> Quit usr ch
-    user = do 
+    fulluser = do 
         usr <- User <$>
             (word8 58 *> takeWhile1 (noneOf [13,32,33]) <* word8 33) <*>
             (takeWhile notWS)
         return ($ usr)
     command = Command <$> (word8 58 *> takeWhile1 notWS) <*>
-        (word8 32 *> commandNumber <* word8 32) <*>
+        (word8 32 *> commNumber <* word8 32) <*>
         takeWhile (/= 13)
     notice = Notice <$> (word8 58 *> takeWhile1 notWS) <*>
         (string " NOTICE " *> takeWhile1 (/= 58) <* word8 58) <*>
@@ -125,7 +125,7 @@ parseMessage = (message <|> unknown) <* word8 13 <* word8 10 where
     unknown = Unknown <$> takeWhile (/= 13)
     noneOf l = not . flip elem l
     notWS = noneOf [32, 13]
-    commandNumber = toNum 100 <$> count 3 (satisfy isDigit)
+    commNumber = toNum 100 <$> count 3 (satisfy isDigit)
     isDigit i = i >= 48 && i <= 57
     toNum _ [] = 0
     toNum i (x:xs) = (fromIntegral x - 48) * i + toNum (i `div` 10) xs

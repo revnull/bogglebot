@@ -4,22 +4,16 @@ import Control.Applicative
 import Control.Concurrent hiding (yield)
 import Control.Concurrent.STM
 import Control.Monad
-import qualified Control.Monad.State as S
 import Control.Monad.Except
 import Data.Trie
-import Data.Maybe
-import Data.String
 import Data.Monoid
 import Data.Foldable hiding (forM_, mapM_)
-import Game.Boggle
 import Game.Boggle.Bot
 import System.Random
 import Network.IRC
 import Network.IRC.Bot
-import Network.IRC.Bot.RWS
 import Network.IRC.Bot.STM
 import Network.Connection
-import Network.TLS
 import System.Environment
 import Data.ConfigFile as CF
 import Data.ByteString as BS
@@ -28,9 +22,7 @@ import Data.Conduit
 import Data.Conduit.Attoparsec
 import Data.Conduit.Network
 import Data.Conduit.Network.TLS
-import Data.IORef
 import Data.List as L
-import Data.Function
 
 data Config = Config {
     host :: BS.ByteString,
@@ -101,13 +93,14 @@ handler conf t app = do
             msg <- await
             case msg of
                 Nothing -> return ()
-                Just (_, msg) -> do
-                    liftIO $ atomically $ writeTChan inp msg
+                Just (_, msg') -> do
+                    liftIO $ atomically $ writeTChan inp msg'
                     tcSink
 
-    forkIO $ tcSource $$ appSink app
+    void $ forkIO $ tcSource $$ appSink app
     appSource app =$= conduitParser parseMessage $$ tcSink
 
+main :: IO ()
 main = do 
     [conf'] <- getArgs
     econf <- runExceptT $ do

@@ -36,7 +36,6 @@ module Network.IRC.Bot (
 import Control.Applicative 
 import Control.Monad
 import Control.Monad.Free.Church
-import Control.Monad.State.Class
 import qualified Data.ByteString as BS
 import Network.IRC
 
@@ -116,18 +115,6 @@ subBot :: (i -> i') -> (o' -> o) -> Bot i' o' a -> Bot i o a
 subBot im om = hoistF phi where
     phi (ReadIn f) = ReadIn (f . fmap im)
     phi (WriteOut o a) = WriteOut (fmap om o) a
-
-subBot' :: (i -> i') -> (o' -> o) -> RawBot i' o' a -> RawBot i o a
-subBot' im om = hoistF phi where
-    phi (ReadIn f) = ReadIn (f . im)
-    phi (WriteOut o a) = WriteOut (om o) a
-
-filterBot :: (i -> Bool) -> Bot i o a -> Bot i o a
-filterBot filt = hoistF phi where
-    phi (ReadIn f) = ReadIn f' where
-        f' m@(IRCMessage i) = guard (filt i) >> f m
-        f' m = f m
-    phi x = x
 
 filterBot' :: (BotMessageF i -> Bool) -> Bot i o a -> Bot i o a
 filterBot' filt = hoistF phi where
