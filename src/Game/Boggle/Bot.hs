@@ -60,6 +60,12 @@ boggleBot t ch g = do
                     forM_ (boardLines b) $ \l -> do
                         writeOut l
 
+            (IRCMessage (PrivMsg _ _ "HELP"), False, _) -> lift $ do
+                writeOut "BoggleBot Commands:"
+                writeOut "\"boggle time\" - starts a game of boggle"
+                writeOut "\"!board\" - displays the current board"
+                writeOut "\"help\" - displays this help message."
+
             (_, False, _) -> return ()
 
             (Timeout _, _, True) -> do
