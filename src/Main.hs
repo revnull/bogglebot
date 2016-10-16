@@ -7,7 +7,6 @@ import Control.Monad
 import Control.Monad.Except
 import Data.Trie
 import Data.Monoid
-import Data.Foldable hiding (forM_, mapM_)
 import Game.Boggle.Bot
 import System.Random
 import Network.IRC

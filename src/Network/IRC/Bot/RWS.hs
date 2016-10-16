@@ -4,10 +4,8 @@ module Network.IRC.Bot.RWS (
                            ,initialBot
                            ) where
 
-import Control.Applicative
 import Control.Monad.Free.Church
 import Control.Monad.RWS as RWS hiding (mapM)
-import Data.Monoid
 import Data.List
 import qualified Data.Sequence as Seq
 import Data.Traversable

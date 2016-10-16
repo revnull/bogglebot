@@ -33,7 +33,6 @@ module Network.IRC.Bot (
                        ,echoBot
                        ) where
 
-import Control.Applicative 
 import Control.Monad
 import Control.Monad.Free.Church
 import qualified Data.ByteString as BS
@@ -127,7 +126,7 @@ handleChannel :: Channel -> Bot Message BS.ByteString () ->
 handleChannel ch b = filterBot' matchChan $ subBot id (SendMsg ch) b where
     matchChan (Timeout ch') = ch' == mch
     matchChan (IRCMessage msg) = msgChannel msg == mch
-    matchChan m = True
+    matchChan _ = True
     mch = Just ch
 
 handleJoin' :: Bot (Channel, User) o () -> Bot Message o ()
