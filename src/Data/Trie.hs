@@ -27,6 +27,7 @@ data Trie =
   | CharTrie (Maybe BS.ByteString) {-# UNPACK #-} !Word8 Trie
   | BSTrie (Maybe BS.ByteString) BS.ByteString Trie
   | Branch (Maybe BS.ByteString) (Array Word8 Trie)
+  deriving (Show)
   
 data STTrie s = 
     STEmpty (Maybe BS.ByteString)
@@ -90,7 +91,8 @@ descendTrie c (Empty _) = Nothing
 descendTrie c (CharTrie _ c' t) = guard (c == c') >> return t
 descendTrie c (BSTrie _ bs t) = case BS.uncons bs of
     Nothing -> descendTrie c t
-    Just (c', bs') -> guard (c == c') >> return (BSTrie Nothing bs' t)
+    Just (c', bs') -> guard (c == c') >>
+        if BS.null bs' then return t else return (BSTrie Nothing bs' t)
 descendTrie c (Branch _ arr) = Just (arr ! c)
 
 sanitize :: BSL.ByteString -> Maybe BS.ByteString

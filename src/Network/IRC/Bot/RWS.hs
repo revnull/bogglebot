@@ -6,6 +6,7 @@ module Network.IRC.Bot.RWS (
 
 import Control.Monad.Free.Church
 import Control.Monad.RWS as RWS hiding (mapM)
+import Data.Foldable
 import Data.List
 import qualified Data.Sequence as Seq
 import Data.Traversable
