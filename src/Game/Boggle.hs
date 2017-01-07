@@ -13,7 +13,8 @@ module Game.Boggle(
                   ,hasWarned
                   ,wordValue
                   ,endGame
-                   ) where
+                  ,Trie
+                  ) where
 
 import Prelude hiding (foldr)
 import Control.Applicative
@@ -24,14 +25,17 @@ import Data.Function
 import Data.Monoid
 import Data.Word
 import Data.Array
-import Data.Trie
 import Data.Bits
-import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BS
 import System.Random
 import qualified Data.Map as M
 import qualified Data.Set as S
 import Control.Monad.State
 import Data.Maybe
+import Data.FixFile
+import qualified Data.FixFile.Trie.Light as T
+
+type Trie = T.Trie ()
 
 type Freqs = M.Map BS.ByteString [Int]
 
@@ -141,29 +145,25 @@ buildTree (Board arr) (Just pos) = TreeF $ do
     pos'@(Pos p _) <- nextPos pos
     return (BS.unpack (arr ! p), Just pos')
 
-solveTree :: TreeF (Maybe Trie -> [BS.ByteString] -> [BS.ByteString]) ->
-    Maybe Trie -> [BS.ByteString] -> [BS.ByteString]
-solveTree _ Nothing = id
-solveTree (TreeF xs) (Just t) = f where
-    f = case getWord t of
-        Nothing -> f'
-        Just w -> (w:) . f'
-    f' bs = foldr subTree bs xs
-    subTree (cs, tf) = tf $ descends cs t
-    descends [] tr = return tr
-    descends (c:cs) tr = do
-        tr' <- descendTrie c tr
-        descends cs tr'
+solveTree :: Fixed g =>
+    TreeF (Maybe (g Trie) -> [Word8] -> [BS.ByteString] -> [BS.ByteString]) ->
+    Maybe (g Trie) -> [Word8] -> [BS.ByteString] -> [BS.ByteString]
+solveTree _ Nothing _ = id
+solveTree (TreeF xs) (Just t) ys = wf where
+    wf = case T.value t of
+        Nothing -> wf'
+        Just () -> ((BS.pack (reverse ys)):) . wf'
+    wf' ws = foldr subTree ws xs
+    subTree (cs, tf) = tf (T.descendTrie (BS.pack cs) t) (pushBS cs ys)
+    pushBS [] y = y
+    pushBS (z:zs) y = pushBS zs (z:y)
 
-hylo :: Functor f => (a -> f a) -> (f b -> b) -> a -> b
-hylo f g = hylo' where hylo' = g . fmap hylo' . f
-
-solver :: Board -> Trie -> [BS.ByteString]
+solver :: Fixed g => Board -> g Trie -> [BS.ByteString]
 solver b t = filter ((>=3) . BS.length) $
-    hylo (buildTree b) solveTree Nothing (Just t) []
+    hylo (buildTree b) solveTree Nothing (Just t) [] []
 
 wordValue :: BS.ByteString -> Word32
-wordValue = (fibs !!) . (\x -> x - 3) . BS.length where
+wordValue = (fibs !!) . (\x -> x - 3) . fromIntegral . BS.length where
     fibs :: [Word32]
     fibs = 1:1:zipWith (+) fibs (tail fibs)
 
@@ -174,7 +174,7 @@ type GameState =
 gameRunning :: (Functor m, MonadState GameState m) => m Bool
 gameRunning = uses _2 isJust
 
-newGame :: (Functor m, MonadState GameState m) => Trie -> m Bool
+newGame :: (Functor m, MonadState GameState m, Fixed g) => g Trie -> m Bool
 newGame t = do
     new <- not <$> gameRunning
     when new $ do

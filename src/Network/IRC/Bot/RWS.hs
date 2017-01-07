@@ -11,19 +11,21 @@ import Data.List
 import qualified Data.Sequence as Seq
 import Data.Traversable
 import Prelude hiding (mapM)
+import Data.FixFile
 
 import Network.IRC.Bot
 
 type ExecOut i o = Endo [o]
 
-type RWSBot i o = RWS i (ExecOut i o) Bool
+type RWSBot i o = RWST i (ExecOut i o) Bool IO
 
 data Exec i o = Running (RWSBot i o (Exec i o)) | Halted
 
-startBot :: RawBot i o a -> RWSBot i o (Exec i o)
-startBot b = put False >> iterM phi (b >> return Halted) where
+startBot :: Root r => FixFile r -> RawBot r i o a -> RWSBot i o (Exec i o)
+startBot ff b = put False >> iterM phi (b >> return Halted) where
     phi (ReadIn g) = filtAsk g
     phi (WriteOut o a) = tell' o >> a
+    phi (Query q g) = liftIO (q ff) >>= g
 
     filtAsk g = do
         wait <- get
@@ -38,18 +40,21 @@ stepBot :: Exec i o -> RWSBot i o (Exec i o)
 stepBot Halted = return Halted
 stepBot (Running b) = b
 
-type Bots = Seq.Seq (Exec BotMessage BotResponse)
+type Bots r = Seq.Seq (Exec BotMessage (BotResponse r))
 
-stepBots :: BotMessage -> Bots -> (Bots, [BotResponse])
-stepBots i bots = processForks (bots', appEndo out []) where
-    (bots', _, out) = runRWS (mapM exec bots) i False
-    exec b = put False >> stepBot b
+stepBots :: Root r => FixFile r ->
+    BotMessage -> Bots r -> IO (Bots r, [BotResponse r])
+stepBots ff i bots = do
+    let exec b = put False >> stepBot b
+    (bots', _, out) <- runRWST (mapM exec bots) i False
+    return $ processForks ff (bots', appEndo out [])
 
-processForks :: (Bots, [BotResponse]) -> (Bots, [BotResponse])
-processForks (bots, resps) = (bots', resps') where
+processForks :: Root r => FixFile r -> 
+    (Bots r, [BotResponse r]) -> (Bots r, [BotResponse r])
+processForks ff (bots, resps) = (bots', resps') where
     (forks, resps') = partition isFork resps
-    bots' = bots <> foldMap (\(Fork b) -> initialBot b) forks
+    bots' = bots <> foldMap (\(Fork b) -> initialBot ff b) forks
 
-initialBot :: IRCBot a -> Bots
-initialBot b = Seq.singleton (Running $ startBot b)
+initialBot :: Root r => FixFile r -> IRCBot r a -> Bots r
+initialBot ff b = Seq.singleton (Running $ startBot ff b)
 

@@ -5,15 +5,16 @@ import Control.Concurrent hiding (yield)
 import Control.Concurrent.STM
 import Control.Monad
 import Control.Monad.Except
-import Data.Trie
 import Data.Monoid
 import Game.Boggle.Bot
+import Game.Boggle (Trie)
 import System.Random
 import Network.IRC
 import Network.IRC.Bot
 import Network.IRC.Bot.STM
 import Network.Connection
 import System.Environment
+import System.Directory
 import Data.ConfigFile as CF
 import Data.ByteString as BS
 import Data.ByteString.Lazy as BSL
@@ -22,6 +23,9 @@ import Data.Conduit.Attoparsec
 import Data.Conduit.Network
 import Data.Conduit.Network.TLS
 import Data.List as L
+import Data.Maybe
+import Data.FixFile
+import qualified Data.FixFile.Trie.Light as T
 
 data Config = Config {
     host :: BS.ByteString,
@@ -47,8 +51,8 @@ instance Monoid CPErrorData where
     mappend (OtherProblem "mempty Error") y = y
     mappend x _ = x
 
-bot :: Trie -> Config -> StdGen -> IRCBot ()
-bot t conf g = do
+bot :: Config -> StdGen -> IRCBot (Ref Trie) ()
+bot conf g = do
     let ch = chan conf
 
     fork $ pingBot
@@ -68,9 +72,9 @@ bot t conf g = do
 
     writeOut (JoinChannel ch)
 
-    boggleBot t ch g
+    boggleBot ch g
 
-runBotIO :: Trie -> Config -> IO ()
+runBotIO :: FixFile (Ref Trie) -> Config -> IO ()
 runBotIO t conf = do
     let c' = if insecure conf
         then (tlsClientConfig (port conf) (host conf)) {
@@ -79,10 +83,10 @@ runBotIO t conf = do
         else tlsClientConfig (port conf) (host conf)
     runTLSClient c' (handler conf t)
 
-handler :: Config -> Trie -> AppData -> IO ()
+handler :: Config -> FixFile (Ref Trie) -> AppData -> IO ()
 handler conf t app = do
     g <- newStdGen
-    (inp, outp) <- startBot (bot t conf g)
+    (inp, outp) <- startBot t (bot conf g)
 
     let tcSource = forever $ do
             resp <- liftIO . atomically $ readTChan outp
@@ -99,6 +103,25 @@ handler conf t app = do
     void $ forkIO $ tcSource $$ appSink app
     appSource app =$= conduitParser parseMessage $$ tcSink
 
+buildDict :: FilePath -> FilePath -> IO (FixFile (Ref Trie))
+buildDict src dst = dictFile where
+    dictFile = do
+        ex <- doesFileExist dst
+        if ex then openFixFile dst else build
+    build = do
+        Prelude.putStrLn $ "Building dictionary database."
+        f <- T.createTrieFile dst
+        ws <- (catMaybes . fmap sanitize . BSL.split 10) <$> BSL.readFile src
+        forM_ (chunk ws) $ \ch -> writeTransaction f $ 
+            forM_ ch $ \w -> T.insertTrieT w ()
+        vacuum f
+        Prelude.putStrLn $ "Finished building dictionary database."
+        return f
+    chunk [] = []
+    chunk l =
+        let (c, r) = L.splitAt 256 l
+        in c : chunk r
+
 main :: IO ()
 main = do 
     [conf'] <- getArgs
@@ -109,8 +132,6 @@ main = do
         Left err -> print err
         Right conf -> do
             print conf
-            d <- readDict "data/american.dict"
-            Prelude.putStrLn $ "Total Word Count: " ++
-                show (L.length (fullDict d))
+            d <- buildDict "data/american.dict" "data/dict.db"
             runBotIO d conf
 

@@ -11,6 +11,7 @@ import Control.Concurrent.STM
 import Control.Monad
 import Control.Monad.Trans
 import Control.Monad.State
+import Data.FixFile
 
 import Network.IRC
 import Network.IRC.Bot
@@ -32,18 +33,18 @@ startTimeoutThread inc = do
             atomically $ writeTChan inc (Timeout chan)
     return ch
 
-startBot :: IRCBot () -> IO (InChan, OutChan)
-startBot bot = do
+startBot :: Root r => FixFile r -> IRCBot r () -> IO (InChan, OutChan)
+startBot ff bot = do
     inc <- newTChanIO
     bmin <- newTChanIO
     outc <- newTChanIO
     toc <- startTimeoutThread bmin
-    void $ forkIO $ void $ flip evalStateT (initialBot bot) $ forever $ do
+    void $ forkIO $ void $ flip evalStateT (initialBot ff bot) $ forever $ do
         bots <- get 
         msg <- liftIO . atomically $ do
             empt <- isEmptyTChan inc
             if empt then readTChan bmin else IRCMessage <$> readTChan inc
-        let (bots', outs) = stepBots msg bots
+        (bots', outs) <- liftIO $ stepBots ff msg bots
         liftIO $ atomically $ do
             forM_ outs $ \out -> case out of
                 IRCResponse r -> writeTChan outc r
