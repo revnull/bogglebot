@@ -152,7 +152,7 @@ solveTree _ Nothing _ = id
 solveTree (TreeF xs) (Just t) ys = wf where
     wf = case T.value t of
         Nothing -> wf'
-        Just () -> ((BS.pack (reverse ys)):) . wf'
+        Just () -> ((BS.pack ys):) . wf'
     wf' ws = foldr subTree ws xs
     subTree (cs, tf) = tf (T.descendTrie (BS.pack cs) t) (pushBS cs ys)
     pushBS [] y = y

@@ -113,7 +113,7 @@ buildDict src dst = dictFile where
         f <- T.createTrieFile dst
         ws <- (catMaybes . fmap sanitize . BSL.split 10) <$> BSL.readFile src
         forM_ (chunk ws) $ \ch -> writeTransaction f $ 
-            forM_ ch $ \w -> T.insertTrieT w ()
+            forM_ ch $ \w -> T.insertTrieT (BSL.reverse w) ()
         vacuum f
         Prelude.putStrLn $ "Finished building dictionary database."
         return f

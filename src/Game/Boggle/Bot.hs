@@ -88,7 +88,7 @@ boggleBot ch g = do
                 case catMaybes $ fmap sanitize cmds of
                     "LOOKUP":ws -> forM_ ws $ \w -> do
                         unless (BSL.null w) $ do
-                            lu <- readQuery (T.lookupTrieT w)
+                            lu <- readQuery (T.lookupTrieT (BSL.reverse w))
                             if isJust lu
                                 then writeOut . BSL.toStrict $
                                     ("\"" <> w <> "\" is a word")
@@ -97,10 +97,11 @@ boggleBot ch g = do
                     "INSERT":ws -> forM_ ws $ \w -> do
                         unless (BSL.null w) $ do
                             ins <- writeExceptQuery $ do
-                                lu <- lift $ T.lookupTrieT w
+                                let w' = BSL.reverse w
+                                lu <- lift $ T.lookupTrieT w'
                                 if isJust lu
                                     then throwError ()
-                                    else lift $ T.insertTrieT w ()
+                                    else lift $ T.insertTrieT w' ()
                             case ins of
                                 Left _ -> writeOut . BSL.toStrict $
                                     ("\"" <> w <> "\" was already present")
@@ -109,9 +110,10 @@ boggleBot ch g = do
                     "DELETE":ws -> forM_ ws $ \w -> do
                         unless (BSL.null w) $ do
                             del <- writeExceptQuery $ do
-                                lu <- lift $ T.lookupTrieT w
+                                let w' = BSL.reverse w
+                                lu <- lift $ T.lookupTrieT w'
                                 if isJust lu
-                                    then lift $ T.deleteTrieT w
+                                    then lift $ T.deleteTrieT w'
                                     else throwError ()
                             case del of
                                 Left _ -> writeOut . BSL.toStrict $
